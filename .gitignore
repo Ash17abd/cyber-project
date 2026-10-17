@@ -60,3 +60,16 @@ ehthumbs.db
 *.log
 # Note: sample_logs is kept for demo ingestion
 # data/threats.db is auto-generated on startup if absent
+
+# Media, Presentations & Large Office Documents
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.wmv
+*.pptx
+*.ppt
+*.docx
+*.doc
+*.zip
+*.tar.gz

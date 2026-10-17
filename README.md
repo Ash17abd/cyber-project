@@ -5,6 +5,7 @@
 [![MITRE ATT&CK](https://img.shields.io/badge/Framework-MITRE%20ATT%26CK%20v14-8A2BE2.svg)](https://attack.mitre.org/)
 [![Lockheed Martin Kill Chain](https://img.shields.io/badge/Cyber%20Kill%20Chain-7%20Stages-00FF66.svg)](https://www.lockheedmartin.com/en-us/capabilities/cyber/cyber-kill-chain.html)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Ash17abd/cyber-sentinel)
 
 An enterprise-grade, Security Operations Center (SOC) style **AI-Powered Cyber Threat Analysis Dashboard** built in Python and Streamlit. The platform ingests multi-source security telemetry (Apache/Nginx access logs, Windows Sysmon/Security Event logs, raw CSVs, JSON, TXT, and PDF incident reports), detects 17+ cyber threat vectors, runs machine learning anomaly detection via Scikit-learn (Isolation Forest & Random Forest), maps attacks against the **MITRE ATT&CK Enterprise Matrix** and **Lockheed Martin Cyber Kill Chain**, delivers transparent **Explainable AI (XAI)** reasoning, plots an interactive **Global Attack Map**, and produces formal publication-ready incident reports (PDF via ReportLab, Excel via OpenPyXL, CSV, and JSON).
 
