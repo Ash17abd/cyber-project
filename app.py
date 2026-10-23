@@ -19,7 +19,7 @@ st.set_page_config(
 # 2. Imports from internal modules
 from modules.config import (
     ASSETS_DIR, THREAT_CATALOG, MALWARE_FAMILIES,
-    VIRUSTOTAL_API_KEY, ABUSEIPDB_API_KEY, ALIENVAULT_OTX_KEY
+    VIRUSTOTAL_API_KEY, ABUSEIPDB_API_KEY, ALIENVAULT_OTX_KEY, GEMINI_API_KEY
 )
 from modules.database import db
 from modules.authentication import (
@@ -72,7 +72,8 @@ if "api_keys" not in st.session_state:
     st.session_state.api_keys = {
         "vt": VIRUSTOTAL_API_KEY,
         "abuse": ABUSEIPDB_API_KEY,
-        "otx": ALIENVAULT_OTX_KEY
+        "otx": ALIENVAULT_OTX_KEY,
+        "gemini": GEMINI_API_KEY
     }
 
 def load_demo_data():
@@ -153,7 +154,7 @@ with st.sidebar:
         "⚙️ Admin & Audit Logs"
     ]
 
-    selected_page = st.radio("Navigation Menu", menu_options, index=0)
+    selected_page = st.radio("Navigation Menu", menu_options, index=0, key="nav_menu")
 
     st.markdown("---")
     c_btn1, c_btn2 = st.columns(2)
@@ -221,12 +222,13 @@ elif selected_page == "📂 Telemetry Ingestion":
                     file_summaries.append(res)
 
                     # Log to database
+                    uploader = st.session_state.get("username") or "Analyst"
                     db.log_upload(
                         filename=res["filename"],
                         file_type=res["file_type"],
                         file_size=res["file_size"],
                         file_hash=res["file_hash"],
-                        uploaded_by=st.session_state.username,
+                        uploaded_by=uploader,
                         records_count=res["records_count"]
                     )
 
@@ -237,7 +239,8 @@ elif selected_page == "📂 Telemetry Ingestion":
                 detected = ThreatDetectionEngine.analyze_events(st.session_state.combined_df)
                 st.session_state.threats = detected
                 db.save_detected_threats(detected)
-                db.log_audit(st.session_state.username, "UPLOAD_FILES", f"Ingested {len(uploaded_files)} files ({len(detected)} threats detected).")
+                uploader = st.session_state.get("username") or "Analyst"
+                db.log_audit(uploader, "UPLOAD_FILES", f"Ingested {len(uploaded_files)} files ({len(detected)} threats detected).")
 
                 st.success(f"Successfully processed {len(uploaded_files)} files! Identified {len(detected)} potential security threats.")
                 st.rerun()
@@ -298,8 +301,9 @@ elif selected_page == "🔍 Threat Intelligence (IoCs)":
         for ip in iocs['ips'][:15]:
             rep = ThreatIntelligenceEngine.lookup_ip_reputation(
                 ip,
-                st.session_state.api_keys["vt"],
-                st.session_state.api_keys["abuse"]
+                st.session_state.api_keys.get("vt", ""),
+                st.session_state.api_keys.get("abuse", ""),
+                st.session_state.api_keys.get("otx", "")
             )
             score = rep.get("score", 0)
             badge_color = "#FF0055" if score >= 80 else ("#FF5E00" if score >= 50 else "#00FF66")
@@ -478,17 +482,21 @@ elif selected_page == "🗺️ Global Attack Map":
         style_key = "satellite"
 
     try:
-        map_obj, df_geo = AttackMapEngine.generate_map(st.session_state.threats, map_style=style_key)
-    except TypeError:
+        map_obj, df_geo = AttackMapEngine.generate_map(
+            st.session_state.threats,
+            events_df=st.session_state.combined_df,
+            map_style=style_key
+        )
+    except Exception:
         map_obj, df_geo = AttackMapEngine.generate_map(st.session_state.threats)
     st_folium(map_obj, width="100%", height=560, returned_objects=[])
 
     st.markdown("---")
-    st.subheader("🌐 Geographic Origin Breakdown")
+    st.subheader(f"🌐 Geographic Origin Breakdown ({len(df_geo)} Endpoints Mapped)")
     if not df_geo.empty:
         st.dataframe(df_geo, use_container_width=True)
     else:
-        st.info("No external routable IP addresses detected in current telemetry.")
+        st.info("No network telemetry or adversary origins currently identified. Ingest files in '📂 Telemetry Ingestion' or load Demo Data.")
 
 # --- PAGE 8: ML ANOMALY LAB ---
 elif selected_page == "🤖 ML Anomaly Lab":
@@ -533,33 +541,135 @@ elif selected_page == "🤖 ML Anomaly Lab":
 
 # --- PAGE 9: AI SOC COPILOT (CHATBOT) ---
 elif selected_page == "💬 AI SOC Copilot":
-    st.subheader("💬 AI SOC Analyst Assistant (Autonomous Copilot)")
-    st.caption("Interactive cybersecurity assistant grounded in your active telemetry, threat detections, and risk scores.")
+    copilot_head1, copilot_head2 = st.columns([3, 1])
+    with copilot_head1:
+        st.subheader("🤖 Autonomous AI SOC Agent & Cybersecurity Copilot")
+        st.caption("Ask ANYTHING: active telemetry, threat hunting, theory, CVEs, or execute agent actions like IP blocking, Sigma rule generation, and log searches.")
+    with copilot_head2:
+        if st.button("🗑️ Reset Agent Chat", help="Clear conversation history and restart autonomous agent session", use_container_width=True):
+            st.session_state.chat_history = [
+                {"role": "assistant", "content": "Greetings, Analyst. I am your autonomous AI SOC Agent. I can analyze active telemetry, execute containment actions, generate detection rules, or answer ANY cybersecurity, coding, or threat intelligence question. How may I assist your mission?"}
+            ]
+            st.rerun()
 
-    # Render Chat History
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    # Autonomous Model Provider & Settings Drawer
+    with st.expander("⚙️ Autonomous Agent Brain & Cloud Provider Settings", expanded=False):
+        c_p1, c_p2, c_p3 = st.columns(3)
+        with c_p1:
+            st.session_state.api_keys["gemini"] = st.text_input(
+                "Google Gemini Key (Recommended)",
+                type="password",
+                value=st.session_state.api_keys.get("gemini", ""),
+                placeholder="AIzaSy...",
+                help="Google Gemini 2.0 Flash / 1.5 Flash cloud intelligence"
+            )
+        with c_p2:
+            st.session_state.api_keys["claude"] = st.text_input(
+                "Anthropic Claude Key (Optional)",
+                type="password",
+                value=st.session_state.api_keys.get("claude", ""),
+                placeholder="sk-ant-...",
+                help="Anthropic Claude 3.5 Sonnet cloud intelligence"
+            )
+        with c_p3:
+            st.session_state.api_keys["openai"] = st.text_input(
+                "OpenAI / Ollama Key (Optional)",
+                type="password",
+                value=st.session_state.api_keys.get("openai", ""),
+                placeholder="sk-...",
+                help="OpenAI GPT-4o-mini or local Ollama compatible endpoint"
+            )
+
+        active_cloud = []
+        if st.session_state.api_keys.get("gemini", "").strip():
+            active_cloud.append("Gemini 2.0 Flash / 1.5 Flash")
+        if st.session_state.api_keys.get("claude", "").strip():
+            active_cloud.append("Claude 3.5 Sonnet")
+        if st.session_state.api_keys.get("openai", "").strip():
+            active_cloud.append("OpenAI / Custom")
+
+        if active_cloud:
+            st.success(f"🟢 Cloud Agent Mode Active via: {', '.join(active_cloud)}")
+        else:
+            st.info("⚡ Autonomous Offline Agent Brain Active (Zero API keys needed, 100% private, instant responses)")
+
+    # Agent Interactive Action & Quick Directives Chips
+    st.markdown("<div style='margin-bottom: 6px; font-size: 12px; color: #00F5FF; font-weight: 700; letter-spacing: 0.5px;'>⚡ AGENT ACTIONS & INSTANT DIRECTIVES:</div>", unsafe_allow_html=True)
+    
+    chip_row1 = st.columns(6)
+    r1_queries = [
+        "🚨 What should I fix first?",
+        "📊 Summarize today's threats",
+        "🔍 Who is attacking us?",
+        "🛑 Block IP 198.51.100.45",
+        "📜 Generate a Sigma rule for SQL Injection",
+        "🔍 Search logs for UNION"
+    ]
+    r1_labels = ["🚨 Fix First", "📊 Summary", "🔍 Attacker IPs", "🛑 Block Top IP", "📜 Sigma Rule", "🔍 Search Logs"]
+    quick_clicked = None
+    for idx, (col, q_text) in enumerate(zip(chip_row1, r1_queries)):
+        with col:
+            if st.button(r1_labels[idx], key=f"chip_r1_{idx}", use_container_width=True, help=q_text):
+                quick_clicked = q_text
+
+    chip_row2 = st.columns(6)
+    r2_queries = [
+        "🧬 Explain detected malware indicators",
+        "🎯 Which MITRE techniques were used?",
+        "⚡ What is our Cyber Kill Chain status?",
+        "📧 Draft an incident notification email to the CISO",
+        "💡 Explain Zero Trust Architecture and NIST guidelines",
+        "💻 Give me an Nmap scanner cheat sheet"
+    ]
+    r2_labels = ["🧬 Malware Lab", "🎯 MITRE Matrix", "⚡ Kill Chain", "📧 Draft Email", "🛡️ Zero Trust", "💻 Nmap Sheet"]
+    for idx, (col, q_text) in enumerate(zip(chip_row2, r2_queries)):
+        with col:
+            if st.button(r2_labels[idx], key=f"chip_r2_{idx}", use_container_width=True, help=q_text):
+                quick_clicked = q_text
+
+    st.markdown("---")
+
+    # Render Chat History Container
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
     # Chat Input
-    user_prompt = st.chat_input("Ask a question about the active telemetry (e.g. 'Why is 198.51.100.45 suspicious?', 'What should I fix first?')")
-    if user_prompt:
-        # Add user query to history
-        st.session_state.chat_history.append({"role": "user", "content": user_prompt})
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
+    user_prompt = st.chat_input("Ask ANYTHING: telemetry, CVEs, tools, or commands (e.g. 'block ip 198.51.100.45', 'search logs UNION', 'explain Diffie-Hellman')")
 
-        # Generate grounded response
-        with st.chat_message("assistant"):
-            bot_reply = SOCChatbot.respond(
-                user_prompt,
-                st.session_state.threats,
-                risk_data,
-                malware_results,
-                st.session_state.uploaded_files
-            )
-            st.markdown(bot_reply)
-            st.session_state.chat_history.append({"role": "assistant", "content": bot_reply})
+    active_query = quick_clicked or user_prompt
+
+    if active_query:
+        # Add user query to history
+        st.session_state.chat_history.append({"role": "user", "content": active_query})
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(active_query)
+
+            # Generate grounded response
+            with st.chat_message("assistant"):
+                with st.spinner("Autonomous AI SOC Agent reasoning & executing..."):
+                    bot_reply = SOCChatbot.respond(
+                        active_query,
+                        st.session_state.threats,
+                        risk_data,
+                        malware_results,
+                        st.session_state.uploaded_files,
+                        mitre_data=mitre_data,
+                        kill_chain_data=kill_chain_data,
+                        timeline_data=timeline_data,
+                        chat_history=st.session_state.chat_history,
+                        gemini_api_key=st.session_state.api_keys.get("gemini", ""),
+                        combined_df=st.session_state.combined_df,
+                        api_keys=st.session_state.api_keys
+                    )
+                    st.markdown(bot_reply)
+                    st.session_state.chat_history.append({"role": "assistant", "content": bot_reply})
+
+        if quick_clicked:
+            st.rerun()
 
 # --- PAGE 10: INCIDENT REPORTS & EXPORT ---
 elif selected_page == "📑 Incident Reports & Export":
@@ -592,10 +702,14 @@ elif selected_page == "📑 Incident Reports & Export":
                     analyst_notes=analyst_notes_input
                 )
                 report_code = IncidentReportGenerator.generate_report_code()
+                st.session_state["compiled_pdf"] = {
+                    "bytes": pdf_bytes,
+                    "code": report_code
+                }
                 db.save_incident_report({
                     "report_code": report_code,
                     "title": "Autonomous SOC Incident Report",
-                    "generated_by": st.session_state.username,
+                    "generated_by": st.session_state.get("username", "SOC Analyst"),
                     "risk_score": risk_data.get("score", 0.0),
                     "threat_count": len(st.session_state.threats),
                     "critical_count": risk_data.get("breakdown", {}).get("Critical", 0),
@@ -603,15 +717,17 @@ elif selected_page == "📑 Incident Reports & Export":
                     "executive_summary": "Full autonomous incident analysis compiled.",
                     "analyst_notes": analyst_notes_input
                 })
-                db.log_audit(st.session_state.username, "GENERATE_PDF_REPORT", f"Generated incident report {report_code}")
+                db.log_audit(st.session_state.get("username", "SOC Analyst"), "GENERATE_PDF_REPORT", f"Generated incident report {report_code}")
+                st.success(f"Report {report_code} compiled successfully!")
 
-                st.download_button(
-                    label=f"⬇️ Download {report_code}.pdf",
-                    data=pdf_bytes,
-                    file_name=f"{report_code}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+        if "compiled_pdf" in st.session_state:
+            st.download_button(
+                label=f"⬇️ Download {st.session_state['compiled_pdf']['code']}.pdf",
+                data=st.session_state["compiled_pdf"]["bytes"],
+                file_name=f"{st.session_state['compiled_pdf']['code']}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
     with rep_col2:
         st.markdown("""

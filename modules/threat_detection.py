@@ -122,7 +122,13 @@ class ThreatDetectionEngine:
             dst_ip = str(row.get('destination_ip', '10.0.0.1'))
             timestamp = str(row.get('timestamp', ''))
 
-            # Check Known Malicious IP
+            # Check Known Malicious IP on source or destination
+            c_val = str(row.get('country', '')) if pd.notna(row.get('country')) else ""
+            city_val = str(row.get('city', '')) if pd.notna(row.get('city')) else ""
+            lat_val = float(row.get('latitude', 0.0)) if pd.notna(row.get('latitude')) else 0.0
+            lon_val = float(row.get('longitude', 0.0)) if pd.notna(row.get('longitude')) else 0.0
+            isp_val = str(row.get('isp', '')) if pd.notna(row.get('isp')) else ""
+
             if src_ip in cls.KNOWN_MALICIOUS_IPS:
                 reason, conf = cls.KNOWN_MALICIOUS_IPS[src_ip]
                 catalog_entry = THREAT_CATALOG["Malicious IP Addresses"]
@@ -139,7 +145,35 @@ class ThreatDetectionEngine:
                     "mitre_technique": catalog_entry["mitre_technique"],
                     "kill_chain_stage": catalog_entry["kill_chain_stage"],
                     "impact": catalog_entry["impact"],
-                    "recommendation": catalog_entry["recommendation"]
+                    "recommendation": catalog_entry["recommendation"],
+                    "country": c_val,
+                    "city": city_val,
+                    "latitude": lat_val,
+                    "longitude": lon_val,
+                    "isp": isp_val
+                })
+            elif dst_ip in cls.KNOWN_MALICIOUS_IPS and not src_ip.startswith(("127.", "0.")):
+                reason, conf = cls.KNOWN_MALICIOUS_IPS[dst_ip]
+                catalog_entry = THREAT_CATALOG["Malicious IP Addresses"]
+                threats.append({
+                    "upload_id": upload_id,
+                    "threat_name": "Malicious IP Addresses",
+                    "severity": catalog_entry["severity"],
+                    "confidence": conf,
+                    "source_ip": dst_ip,
+                    "destination_ip": src_ip,
+                    "timestamp": timestamp,
+                    "evidence": f"Outbound connection to known adversary infrastructure {dst_ip} ({reason})",
+                    "mitre_id": "T1071",
+                    "mitre_technique": "Application Layer Protocol: C2",
+                    "kill_chain_stage": "Command & Control",
+                    "impact": catalog_entry["impact"],
+                    "recommendation": f"Immediately sever network link to destination {dst_ip}.",
+                    "country": c_val,
+                    "city": city_val,
+                    "latitude": lat_val,
+                    "longitude": lon_val,
+                    "isp": isp_val
                 })
 
             # Check Pattern Signatures
@@ -162,7 +196,12 @@ class ThreatDetectionEngine:
                             "mitre_technique": catalog_entry.get("mitre_technique", "Unknown"),
                             "kill_chain_stage": catalog_entry.get("kill_chain_stage", "Exploitation"),
                             "impact": catalog_entry.get("impact", ""),
-                            "recommendation": catalog_entry.get("recommendation", "")
+                            "recommendation": catalog_entry.get("recommendation", ""),
+                            "country": c_val,
+                            "city": city_val,
+                            "latitude": lat_val,
+                            "longitude": lon_val,
+                            "isp": isp_val
                         })
                         break  # Match first highest pattern for this threat
 

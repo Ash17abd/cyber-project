@@ -105,8 +105,10 @@ class ThreatIntelligenceEngine:
         }
 
     @classmethod
-    def lookup_ip_reputation(cls, ip: str, vt_api_key: str = "", abuse_api_key: str = "") -> Dict[str, Any]:
+    def lookup_ip_reputation(cls, ip: str, vt_api_key: str = "", abuse_api_key: str = "", otx_api_key: str = "") -> Dict[str, Any]:
         """Looks up IP reputation using live APIs if configured, else realistic cache."""
+        live_result = {}
+
         # 1. Live AbuseIPDB query if API key provided
         if abuse_api_key:
             try:
@@ -114,12 +116,12 @@ class ThreatIntelligenceEngine:
                     "https://api.abuseipdb.com/api/v2/check",
                     headers={"Key": abuse_api_key, "Accept": "application/json"},
                     params={"ipAddress": ip, "maxAgeInDays": 90},
-                    timeout=4
+                    timeout=3
                 )
                 if resp.status_code == 200:
                     d = resp.json().get("data", {})
                     score = d.get("abuseConfidenceScore", 0)
-                    return {
+                    live_result = {
                         "ip": ip,
                         "reputation": "Malicious" if score >= 50 else ("Suspicious" if score > 20 else "Clean"),
                         "score": score,
@@ -132,7 +134,79 @@ class ThreatIntelligenceEngine:
             except Exception:
                 pass
 
-        # 2. Match in local high-fidelity intelligence feed
+        # 2. Live VirusTotal query if API key provided
+        if vt_api_key:
+            try:
+                resp = requests.get(
+                    f"https://www.virustotal.com/api/v3/ip_addresses/{ip}",
+                    headers={"x-apikey": vt_api_key, "Accept": "application/json"},
+                    timeout=3
+                )
+                if resp.status_code == 200:
+                    vt_data = resp.json().get("data", {}).get("attributes", {})
+                    stats = vt_data.get("last_analysis_stats", {})
+                    malicious = stats.get("malicious", 0)
+                    suspicious = stats.get("suspicious", 0)
+                    total = sum(stats.values()) or 70
+                    vt_score = int(min(100, ((malicious * 2 + suspicious) / max(1, total)) * 100))
+                    country = vt_data.get("country", live_result.get("country", "Unknown"))
+                    as_owner = vt_data.get("as_owner", live_result.get("asn", "Unknown ISP"))
+                    rep_tier = "Malicious" if malicious > 5 else ("Suspicious" if (malicious + suspicious) > 0 else "Clean")
+                    if not live_result:
+                        live_result = {
+                            "ip": ip,
+                            "reputation": rep_tier,
+                            "score": vt_score,
+                            "virustotal": f"{malicious}/{total} security engines flagged",
+                            "abuseipdb": "VirusTotal Live Enriched",
+                            "alienvault": f"ASN: {as_owner}",
+                            "country": country,
+                            "asn": as_owner
+                        }
+                    else:
+                        live_result["virustotal"] = f"{malicious}/{total} security engines flagged"
+                        if vt_score > live_result.get("score", 0):
+                            live_result["score"] = vt_score
+                            live_result["reputation"] = rep_tier
+            except Exception:
+                pass
+
+        # 3. Live AlienVault OTX query if API key provided
+        if otx_api_key:
+            try:
+                resp = requests.get(
+                    f"https://otx.alienvault.com/api/v1/indicators/IPv4/{ip}/general",
+                    headers={"X-OTX-API-KEY": otx_api_key, "Accept": "application/json"},
+                    timeout=3
+                )
+                if resp.status_code == 200:
+                    otx_data = resp.json()
+                    pulse_count = otx_data.get("pulse_info", {}).get("count", 0)
+                    otx_country = otx_data.get("country_name", "Unknown")
+                    if live_result:
+                        live_result["alienvault"] = f"{pulse_count} OTX Pulses linked"
+                        if pulse_count > 5 and live_result.get("score", 0) < 70:
+                            live_result["score"] = min(95, live_result.get("score", 0) + pulse_count * 5)
+                            live_result["reputation"] = "Suspicious" if live_result["score"] < 80 else "Malicious"
+                    else:
+                        otx_score = min(99, pulse_count * 10)
+                        live_result = {
+                            "ip": ip,
+                            "reputation": "Malicious" if pulse_count > 8 else ("Suspicious" if pulse_count > 0 else "Clean"),
+                            "score": otx_score,
+                            "virustotal": "AlienVault OTX Verified",
+                            "abuseipdb": "OTX Telemetry",
+                            "alienvault": f"{pulse_count} OTX Pulses linked",
+                            "country": otx_country,
+                            "asn": otx_data.get("asn", "AlienVault Indicator")
+                        }
+            except Exception:
+                pass
+
+        if live_result:
+            return live_result
+
+        # 4. Match in local high-fidelity intelligence feed
         if ip in cls.KNOWN_IOC_REPUTATION:
             item = cls.KNOWN_IOC_REPUTATION[ip].copy()
             item["ip"] = ip
@@ -156,6 +230,8 @@ class ThreatIntelligenceEngine:
             pass
 
         # Simulated lookup for other public IPs
+        from modules.attack_map import AttackMapEngine
+        geo_data = AttackMapEngine.resolve_ip(ip)
         sim_hash = int(hashlib.md5(ip.encode()).hexdigest()[:4], 16) % 100
         is_mal = sim_hash > 70
         return {
@@ -165,6 +241,6 @@ class ThreatIntelligenceEngine:
             "virustotal": f"{int(sim_hash/3)}/72 security vendors flagged" if is_mal else "0/72 vendors flagged",
             "abuseipdb": f"Confidence: {sim_hash}%" if is_mal else "No reports on record",
             "alienvault": "Flagged in 3 OTX Pulses" if is_mal else "No threat pulses linked",
-            "country": "United States" if sim_hash % 2 == 0 else "Netherlands",
-            "asn": "Cloudflare / CDN Provider" if sim_hash % 2 == 0 else "DigitalOcean LLC"
+            "country": geo_data.get("country", "United States"),
+            "asn": geo_data.get("isp", "Autonomous System")
         }
